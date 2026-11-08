@@ -1,36 +1,37 @@
-name: Build APK
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
 
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+android {
+    namespace 'com.ollie.spudgacha'
+    compileSdk 34
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+    defaultConfig {
+        applicationId "com.ollie.spudgacha"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
 
-    - name: Accept Android SDK Licenses
-      run: |
-        if [ -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-        else
-          yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses || true
-        fi
-
-    - name: Build with Gradle
-      run: gradle assembleDebug
-
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug
-        path: app/build/outputs/apk/debug/app-debug.apk
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.10.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+}
