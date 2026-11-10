@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -62,7 +63,7 @@ class SpudGachaService : AccessibilityService() {
         }
 
         inputView = EditText(this).apply {
-            hint = "Tempel nomor (pisah enter)"
+            hint = "Tempel nomor (+62 / 62 / 8...)"
             setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
             textSize = 12f
@@ -72,7 +73,6 @@ class SpudGachaService : AccessibilityService() {
             setBackgroundColor(Color.parseColor("#33FFFFFF"))
         }
 
-        // Layout buat nampung 2 tombol sejajar
         val buttonLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 16, 0, 0)
@@ -92,6 +92,11 @@ class SpudGachaService : AccessibilityService() {
                     isProcessing = false
                     inputView.setText("") 
                     
+                    // MATIIN FOKUS & KEYBOARD BIAR WA KE FOKUS
+                    inputView.clearFocus()
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    imm.hideSoftInputFromWindow(inputView.windowToken, 0)
+
                     Toast.makeText(this@SpudGachaService, "${GachaQueue.numbers.size} nomor masuk. Buka WA.", Toast.LENGTH_SHORT).show()
                     
                     var intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
@@ -101,6 +106,12 @@ class SpudGachaService : AccessibilityService() {
                     if (intent != null) {
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
+                        
+                        // Kasih waktu WA kebuka, terus paksa cek manual
+                        handler.postDelayed({
+                            val root = rootInActiveWindow
+                            if (root != null) triggerManualScan(root)
+                        }, 2000)
                     }
                 }
             }
@@ -108,28 +119,23 @@ class SpudGachaService : AccessibilityService() {
 
         val btnStop = Button(this).apply {
             text = "MATIKAN"
-            setBackgroundColor(Color.parseColor("#D32F2F")) // Merah
+            setBackgroundColor(Color.parseColor("#D32F2F"))
             setTextColor(Color.WHITE)
             setOnClickListener {
-                // Bersihin antrean & state
                 GachaQueue.numbers.clear()
                 isPaused = true
                 isProcessing = false
                 handler.removeCallbacksAndMessages(null)
                 
-                // Hapus overlay dari layar
                 if (this@SpudGachaService::windowManager.isInitialized && this@SpudGachaService::overlayView.isInitialized) {
                     windowManager.removeView(overlayView)
                 }
                 
-                Toast.makeText(this@SpudGachaService, "Robot OFF. Overlay ditutup.", Toast.LENGTH_SHORT).show()
-                
-                // Matiin service Accessibility-nya (Robot bener-bener berhenti)
+                Toast.makeText(this@SpudGachaService, "Robot OFF.", Toast.LENGTH_SHORT).show()
                 disableSelf()
             }
         }
 
-        // Masukin tombol ke layout horizontal (bagi rata)
         val paramsRun = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(0, 0, 8, 0) }
         val paramsStop = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(8, 0, 0, 0) }
         
@@ -155,6 +161,16 @@ class SpudGachaService : AccessibilityService() {
         windowManager.addView(overlayView, params)
     }
 
+    // Fungsi manual kalo event listener gak nangkep
+    private fun triggerManualScan(root: AccessibilityNodeInfo) {
+        if (isProcessing || isPaused || GachaQueue.numbers.isEmpty()) return
+        val phoneInput = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_phone")?.firstOrNull()
+        if (phoneInput != null && phoneInput.text.isNullOrEmpty()) {
+            isProcessing = true
+            handleNumberInput(root, phoneInput)
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val root = rootInActiveWindow ?: return
         if ((event.packageName != "com.whatsapp" && event.packageName != "com.whatsapp.w4b") || isProcessing || isPaused) return
@@ -175,7 +191,11 @@ class SpudGachaService : AccessibilityService() {
             return
         }
 
-        val currentNumber = GachaQueue.numbers.removeAt(0).replace("[^0-9]".toRegex(), "")
+        // Bersihin format nomor: +62 jadi 62, spasi ilang, strip ilang
+        val currentNumber = GachaQueue.numbers.removeAt(0)
+            .replace("+", "")
+            .replace("[^0-9]".toRegex(), "")
+            
         updateOverlay()
 
         if (currentNumber.isEmpty()) {
