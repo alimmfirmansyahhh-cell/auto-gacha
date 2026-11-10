@@ -1,15 +1,14 @@
 package com.ollie.spudgacha
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -18,39 +17,51 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val layout = LinearLayout(this).apply {
+        val rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(64, 64, 64, 64)
         }
         
         val info = TextView(this).apply {
-            text = "1. Izin Overlay (Opsional, buat liat counter)\n2. Aktifkan Aksesibilitas\n3. Tempel nomor (pisah enter) & GAS"
+            text = "1. Izin Overlay & Aksesibilitas\n2. Tempel nomor & GAS"
             textSize = 16f
             setPadding(0, 0, 0, 32)
         }
 
-        val inputNumber = EditText(this).apply {
-            hint = "628111...\n+628222...\n8..."
-            setPadding(0, 16, 0, 16)
-            minLines = 5
+        // ScrollView biar tombol di bawah gak kedorong keluar layar
+        val scrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
         }
 
+        val inputNumber = EditText(this).apply {
+            hint = "+628111...\n+224610...\n8..."
+            setPadding(0, 16, 0, 16)
+            minLines = 10
+        }
+        scrollView.addView(inputNumber)
+
         val btnOverlay = Button(this).apply {
-            text = "1. Izin Overlay"
+            text = "Izin Overlay"
             setOnClickListener {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             }
         }
         
         val btnAccess = Button(this).apply {
-            text = "2. Aktifkan Aksesibilitas"
+            text = "Aktifkan Aksesibilitas"
             setOnClickListener {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
         }
 
         val btnGas = Button(this).apply {
-            text = "3. GAS BATCH GACHA"
+            text = "GAS BATCH GACHA"
+            setBackgroundColor(Color.parseColor("#388E3C")) // Ijo
+            setTextColor(Color.WHITE)
             setOnClickListener {
                 val rawText = inputNumber.text.toString().trim()
                 if (rawText.isNotEmpty()) {
@@ -58,6 +69,7 @@ class MainActivity : AppCompatActivity() {
                     
                     GachaQueue.numbers.clear()
                     GachaQueue.numbers.addAll(parsedNumbers)
+                    GachaQueue.isStopped = false // Reset status stop
                     
                     Toast.makeText(this@MainActivity, "${GachaQueue.numbers.size} nomor masuk. Buka WA...", Toast.LENGTH_SHORT).show()
                     
@@ -74,12 +86,25 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        val btnStop = Button(this).apply {
+            text = "STOP GACHA"
+            setBackgroundColor(Color.parseColor("#D32F2F")) // Merah
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                GachaQueue.isStopped = true // Sinyal ke service buat berhenti
+                GachaQueue.numbers.clear()
+                Toast.makeText(this@MainActivity, "Gacha dihentikan.", Toast.LENGTH_SHORT).show()
+            }
+        }
         
-        layout.addView(info)
-        layout.addView(inputNumber)
-        layout.addView(btnOverlay)
-        layout.addView(btnAccess)
-        layout.addView(btnGas)
-        setContentView(layout)
+        rootLayout.addView(info)
+        rootLayout.addView(scrollView)
+        rootLayout.addView(btnOverlay)
+        rootLayout.addView(btnAccess)
+        rootLayout.addView(btnGas)
+        rootLayout.addView(btnStop)
+        
+        setContentView(rootLayout)
     }
 }
