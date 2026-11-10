@@ -42,10 +42,28 @@ class SpudGachaService : AccessibilityService() {
         "234" to "Nigeria", "27" to "South Africa", "94" to "Sri Lanka"
     )
 
+    // RUNTIME POLLING
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            if (!isProcessing && !isPaused && GachaQueue.numbers.isNotEmpty()) {
+                val root = getWhatsAppRoot()
+                if (root != null) {
+                    val phoneInput = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_phone")?.firstOrNull()
+                    if (phoneInput != null && phoneInput.text.isNullOrEmpty()) {
+                        isProcessing = true
+                        handleNumberInput(root, phoneInput)
+                    }
+                }
+            }
+            handler.postDelayed(this, 1500) // Cek tiap 1.5 detik
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         setupOverlay()
+        handler.post(pollRunnable) // Mulai polling
     }
 
     private fun setupOverlay() {
@@ -92,7 +110,6 @@ class SpudGachaService : AccessibilityService() {
                     isProcessing = false
                     inputView.setText("") 
                     
-                    // MATIIN FOKUS & KEYBOARD BIAR WA KE FOKUS
                     inputView.clearFocus()
                     val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                     imm.hideSoftInputFromWindow(inputView.windowToken, 0)
@@ -106,12 +123,6 @@ class SpudGachaService : AccessibilityService() {
                     if (intent != null) {
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
-                        
-                        // Kasih waktu WA kebuka, terus paksa cek manual
-                        handler.postDelayed({
-                            val root = rootInActiveWindow
-                            if (root != null) triggerManualScan(root)
-                        }, 2000)
                     }
                 }
             }
@@ -161,28 +172,22 @@ class SpudGachaService : AccessibilityService() {
         windowManager.addView(overlayView, params)
     }
 
-    // Fungsi manual kalo event listener gak nangkep
-    private fun triggerManualScan(root: AccessibilityNodeInfo) {
-        if (isProcessing || isPaused || GachaQueue.numbers.isEmpty()) return
-        val phoneInput = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_phone")?.firstOrNull()
-        if (phoneInput != null && phoneInput.text.isNullOrEmpty()) {
-            isProcessing = true
-            handleNumberInput(root, phoneInput)
+    // Fungsi nyari Window WA secara paksa (gak peduli overlay nutupin)
+    private fun getWhatsAppRoot(): AccessibilityNodeInfo? {
+        val windows = windows // Ambil semua window yang aktif
+        for (window in windows) {
+            val root = window.root ?: continue
+            val pkg = root.packageName?.toString()
+            if (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b") {
+                return root
+            }
         }
+        return null
     }
 
+    // Event listener tetep dibiarin nyala buat cadangan
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val root = rootInActiveWindow ?: return
-        if ((event.packageName != "com.whatsapp" && event.packageName != "com.whatsapp.w4b") || isProcessing || isPaused) return
-
-        if (GachaQueue.numbers.isEmpty()) return
-
-        val phoneInput = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_phone")?.firstOrNull()
-        
-        if (phoneInput != null && phoneInput.text.isNullOrEmpty()) {
-            isProcessing = true
-            handleNumberInput(root, phoneInput)
-        }
+        // Polling yang ngerjain, biarin kosong
     }
 
     private fun handleNumberInput(root: AccessibilityNodeInfo, phoneInput: AccessibilityNodeInfo) {
@@ -191,7 +196,6 @@ class SpudGachaService : AccessibilityService() {
             return
         }
 
-        // Bersihin format nomor: +62 jadi 62, spasi ilang, strip ilang
         val currentNumber = GachaQueue.numbers.removeAt(0)
             .replace("+", "")
             .replace("[^0-9]".toRegex(), "")
@@ -213,7 +217,7 @@ class SpudGachaService : AccessibilityService() {
                 countryBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
 
                 handler.postDelayed({
-                    val currentRoot = rootInActiveWindow
+                    val currentRoot = getWhatsAppRoot()
                     val searchNode = currentRoot?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")?.firstOrNull()
                         ?: currentRoot?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")?.firstOrNull()
 
@@ -231,7 +235,7 @@ class SpudGachaService : AccessibilityService() {
                             }
 
                             handler.postDelayed({
-                                val newRoot = rootInActiveWindow
+                                val newRoot = getWhatsAppRoot()
                                 val newPhoneInput = newRoot?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_phone")?.firstOrNull()
                                 if (newPhoneInput != null) {
                                     pasteAndNext(newPhoneInput, localNumber)
@@ -254,6 +258,7 @@ class SpudGachaService : AccessibilityService() {
     }
 
     private fun fallbackPaste(phoneInput: AccessibilityNodeInfo, number: String) {
+        phoneInput.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         val clearArgs = Bundle()
         clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
         phoneInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
@@ -267,6 +272,7 @@ class SpudGachaService : AccessibilityService() {
     }
 
     private fun pasteAndNext(phoneInput: AccessibilityNodeInfo, number: String) {
+        phoneInput.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         val clearArgs = Bundle()
         clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
         phoneInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
@@ -281,7 +287,7 @@ class SpudGachaService : AccessibilityService() {
 
     private fun clickNextAndWait() {
         handler.postDelayed({
-            val root = rootInActiveWindow
+            val root = getWhatsAppRoot()
             val nextBtn = root?.findAccessibilityNodeInfosByText("Next")?.firstOrNull()
                 ?: root?.findAccessibilityNodeInfosByText("Berikutnya")?.firstOrNull()
                 ?: root?.findAccessibilityNodeInfosByText("Lanjut")?.firstOrNull()
@@ -289,9 +295,9 @@ class SpudGachaService : AccessibilityService() {
             nextBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
 
             handler.postDelayed({
-                val finalRoot = rootInActiveWindow
+                val finalRoot = getWhatsAppRoot()
                 if (finalRoot != null) detectStatus(finalRoot) else isProcessing = false
-            }, 4000)
+            }, 4500) // Naikin jadi 4.5 detik biar aman loading
         }, 500)
     }
 
@@ -337,8 +343,8 @@ class SpudGachaService : AccessibilityService() {
         performGlobalAction(GLOBAL_ACTION_BACK)
         handler.postDelayed({
             performGlobalAction(GLOBAL_ACTION_BACK)
-            handler.postDelayed({ isProcessing = false }, 1000)
-        }, 1000)
+            handler.postDelayed({ isProcessing = false }, 1500)
+        }, 1500)
     }
 
     private fun updateOverlay() {
