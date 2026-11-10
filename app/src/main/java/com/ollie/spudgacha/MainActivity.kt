@@ -28,7 +28,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 32)
         }
 
-        // ScrollView biar tombol di bawah gak kedorong keluar layar
         val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -60,7 +59,7 @@ class MainActivity : AppCompatActivity() {
 
         val btnGas = Button(this).apply {
             text = "GAS BATCH GACHA"
-            setBackgroundColor(Color.parseColor("#388E3C")) // Ijo
+            setBackgroundColor(Color.parseColor("#388E3C"))
             setTextColor(Color.WHITE)
             setOnClickListener {
                 val rawText = inputNumber.text.toString().trim()
@@ -69,30 +68,40 @@ class MainActivity : AppCompatActivity() {
                     
                     GachaQueue.numbers.clear()
                     GachaQueue.numbers.addAll(parsedNumbers)
-                    GachaQueue.isStopped = false // Reset status stop
+                    GachaQueue.isStopped = false
+                    GachaQueue.isPaused = false
                     
                     Toast.makeText(this@MainActivity, "${GachaQueue.numbers.size} nomor masuk. Buka WA...", Toast.LENGTH_SHORT).show()
                     
                     var intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
                     if (intent == null) intent = packageManager.getLaunchIntentForPackage("com.whatsapp.w4b")
-                    
-                    if (intent != null) {
-                        startActivity(intent)
-                    } else {
-                        Toast.makeText(this@MainActivity, "WA gak ketemu", Toast.LENGTH_SHORT).show()
-                    }
+                    if (intent != null) startActivity(intent)
                 } else {
                     Toast.makeText(this@MainActivity, "Nomor kosong", Toast.LENGTH_SHORT).show()
                 }
             }
         }
 
-        val btnStop = Button(this).apply {
-            text = "STOP GACHA"
-            setBackgroundColor(Color.parseColor("#D32F2F")) // Merah
+        val btnResume = Button(this).apply {
+            text = "LANJUT GACHA (Abis OTP)"
+            setBackgroundColor(Color.parseColor("#1976D2")) // Biru
             setTextColor(Color.WHITE)
             setOnClickListener {
-                GachaQueue.isStopped = true // Sinyal ke service buat berhenti
+                GachaQueue.isPaused = false
+                Toast.makeText(this@MainActivity, "Lanjut gacha nomor berikutnya...", Toast.LENGTH_SHORT).show()
+                
+                var intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
+                if (intent == null) intent = packageManager.getLaunchIntentForPackage("com.whatsapp.w4b")
+                if (intent != null) startActivity(intent)
+            }
+        }
+
+        val btnStop = Button(this).apply {
+            text = "STOP GACHA"
+            setBackgroundColor(Color.parseColor("#D32F2F"))
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                GachaQueue.isStopped = true
                 GachaQueue.numbers.clear()
                 Toast.makeText(this@MainActivity, "Gacha dihentikan.", Toast.LENGTH_SHORT).show()
             }
@@ -103,6 +112,7 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(btnOverlay)
         rootLayout.addView(btnAccess)
         rootLayout.addView(btnGas)
+        rootLayout.addView(btnResume)
         rootLayout.addView(btnStop)
         
         setContentView(rootLayout)
