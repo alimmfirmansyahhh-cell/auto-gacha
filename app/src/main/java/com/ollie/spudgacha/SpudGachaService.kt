@@ -32,27 +32,13 @@ class SpudGachaService : AccessibilityService() {
     private var isPaused = false
     private val handler = Handler(Looper.getMainLooper())
 
-    // Kamus kode negara (bisa lu tambahin sendiri)
     private val countryMap = mapOf(
-        "62" to "Indonesia",
-        "60" to "Malaysia",
-        "65" to "Singapore",
-        "66" to "Thailand",
-        "63" to "Philippines",
-        "84" to "Vietnam",
-        "91" to "India",
-        "1" to "United States",
-        "44" to "United Kingdom",
-        "7" to "Russia",
-        "86" to "China",
-        "81" to "Japan",
-        "82" to "South Korea",
-        "90" to "Turkey",
-        "92" to "Pakistan",
-        "880" to "Bangladesh",
-        "234" to "Nigeria",
-        "27" to "South Africa",
-        "94" to "Sri Lanka"
+        "62" to "Indonesia", "60" to "Malaysia", "65" to "Singapore",
+        "66" to "Thailand", "63" to "Philippines", "84" to "Vietnam",
+        "91" to "India", "1" to "United States", "44" to "United Kingdom",
+        "7" to "Russia", "86" to "China", "81" to "Japan", "82" to "South Korea",
+        "90" to "Turkey", "92" to "Pakistan", "880" to "Bangladesh",
+        "234" to "Nigeria", "27" to "South Africa", "94" to "Sri Lanka"
     )
 
     override fun onServiceConnected() {
@@ -86,6 +72,12 @@ class SpudGachaService : AccessibilityService() {
             setBackgroundColor(Color.parseColor("#33FFFFFF"))
         }
 
+        // Layout buat nampung 2 tombol sejajar
+        val buttonLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 16, 0, 0)
+        }
+
         val btnRun = Button(this).apply {
             text = "GAS RUN"
             setOnClickListener {
@@ -114,9 +106,39 @@ class SpudGachaService : AccessibilityService() {
             }
         }
 
+        val btnStop = Button(this).apply {
+            text = "MATIKAN"
+            setBackgroundColor(Color.parseColor("#D32F2F")) // Merah
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                // Bersihin antrean & state
+                GachaQueue.numbers.clear()
+                isPaused = true
+                isProcessing = false
+                handler.removeCallbacksAndMessages(null)
+                
+                // Hapus overlay dari layar
+                if (this@SpudGachaService::windowManager.isInitialized && this@SpudGachaService::overlayView.isInitialized) {
+                    windowManager.removeView(overlayView)
+                }
+                
+                Toast.makeText(this@SpudGachaService, "Robot OFF. Overlay ditutup.", Toast.LENGTH_SHORT).show()
+                
+                // Matiin service Accessibility-nya (Robot bener-bener berhenti)
+                disableSelf()
+            }
+        }
+
+        // Masukin tombol ke layout horizontal (bagi rata)
+        val paramsRun = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(0, 0, 8, 0) }
+        val paramsStop = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(8, 0, 0, 0) }
+        
+        buttonLayout.addView(btnRun, paramsRun)
+        buttonLayout.addView(btnStop, paramsStop)
+
         overlayView.addView(statsView)
         overlayView.addView(inputView)
-        overlayView.addView(btnRun)
+        overlayView.addView(buttonLayout)
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -166,7 +188,6 @@ class SpudGachaService : AccessibilityService() {
         val localNumber = if (countryCode != null) currentNumber.removePrefix(countryCode) else currentNumber
 
         if (countryName != null) {
-            // Kalo negara kedeteksi, klik dropdown negara dulu
             val countryBtn = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_country")?.firstOrNull()
             if (countryBtn != null) {
                 countryBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -208,7 +229,6 @@ class SpudGachaService : AccessibilityService() {
                 fallbackPaste(phoneInput, currentNumber)
             }
         } else {
-            // Kalo gak ada di kamus, coba tempel pake '+' dan biarin WA deteksi sendiri
             fallbackPaste(phoneInput, currentNumber)
         }
     }
@@ -302,7 +322,7 @@ class SpudGachaService : AccessibilityService() {
     }
 
     private fun updateOverlay() {
-        statsView.text = "$winCount Ready · $cdCount Ban · $banCount Ban\nSisa: ${GachaQueue.numbers.size}"
+        statsView.text = "$winCount Ready · $cdCount CD · $banCount Ban\nSisa: ${GachaQueue.numbers.size}"
     }
 
     override fun onInterrupt() {
