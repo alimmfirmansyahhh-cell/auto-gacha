@@ -33,15 +33,13 @@ class SpudGachaService : AccessibilityService() {
     private var isProcessing = false
     private var isPaused = false
     private val handler = Handler(Looper.getMainLooper())
-    
-    // Watchdog buat reset kalo stuck
-    private var activeNumber: String? = null
-    private val watchdogRunnable = Runnable {
+
+    // TIMER PENGAMAN (Kalo stuck lebih dari 8 detik, paksa reset)
+    private val forceResetRunnable = Runnable {
         if (isProcessing) {
             isProcessing = false
-            activeNumber = null
-            Toast.makeText(this, "Stuck! Bypass ke nomor berikutnya.", Toast.LENGTH_SHORT).show()
-            performGlobalAction(GLOBAL_ACTION_BACK) // Coba balik
+            performGlobalAction(GLOBAL_ACTION_BACK) // Balikin layar
+            Toast.makeText(this@SpudGachaService, "Stuck! Maksa skip nomor.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -57,16 +55,21 @@ class SpudGachaService : AccessibilityService() {
     private val pollRunnable = object : Runnable {
         override fun run() {
             if (!isProcessing && !isPaused && GachaQueue.numbers.isNotEmpty()) {
-                val root = getWhatsAppRoot()
-                if (root != null) {
+                // BALIK PAKE rootInActiveWindow BIAR GAK BUTA
+                val root = rootInActiveWindow
+                if (root != null && (root.packageName == "com.whatsapp" || root.packageName == "com.whatsapp.w4b")) {
                     val phoneInput = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_phone")?.firstOrNull()
+                    
+                    // Kalo kolom kosong, hajar!
                     if (phoneInput != null && phoneInput.text.isNullOrEmpty()) {
                         isProcessing = true
+                        // Pasang timer pengaman 8 detik
+                        handler.postDelayed(forceResetRunnable, 8000) 
                         handleNumberInput(root, phoneInput)
                     }
                 }
             }
-            handler.postDelayed(this, 1500)
+            handler.postDelayed(this, 1200) // Cek tiap 1.2 detik
         }
     }
 
@@ -74,7 +77,7 @@ class SpudGachaService : AccessibilityService() {
         super.onServiceConnected()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         setupOverlay()
-        handler.post(pollRunnable)
+        handler.post(pollRunnable) 
     }
 
     private fun setupOverlay() {
@@ -181,25 +184,14 @@ class SpudGachaService : AccessibilityService() {
         windowManager.addView(overlayView, params)
     }
 
-    private fun getWhatsAppRoot(): AccessibilityNodeInfo? {
-        val windows = windows
-        for (window in windows) {
-            val root = window.root ?: continue
-            val pkg = root.packageName?.toString()
-            if (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b") {
-                return root
-            }
-        }
-        return null
-    }
-
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // Polling ngerjain semuanya
+        // Polling yang ngerjain, event diem aja
     }
 
     private fun handleNumberInput(root: AccessibilityNodeInfo, phoneInput: AccessibilityNodeInfo) {
         if (GachaQueue.numbers.isEmpty()) {
             isProcessing = false
+            handler.removeCallbacks(forceResetRunnable)
             return
         }
 
@@ -207,14 +199,11 @@ class SpudGachaService : AccessibilityService() {
             .replace("+", "")
             .replace("[^0-9]".toRegex(), "")
             
-        activeNumber = currentNumber
         updateOverlay()
-        
-        // Pasang alarm 10 detik
-        handler.postDelayed(watchdogRunnable, 10000)
 
         if (currentNumber.isEmpty()) {
             isProcessing = false
+            handler.removeCallbacks(forceResetRunnable)
             return
         }
 
@@ -228,7 +217,7 @@ class SpudGachaService : AccessibilityService() {
                 countryBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
 
                 handler.postDelayed({
-                    val currentRoot = getWhatsAppRoot()
+                    val currentRoot = rootInActiveWindow
                     val searchNode = currentRoot?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")?.firstOrNull()
                         ?: currentRoot?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")?.firstOrNull()
 
@@ -246,76 +235,70 @@ class SpudGachaService : AccessibilityService() {
                             }
 
                             handler.postDelayed({
-                                val newRoot = getWhatsAppRoot()
+                                val newRoot = rootInActiveWindow
                                 val newPhoneInput = newRoot?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/registration_phone")?.firstOrNull()
                                 if (newPhoneInput != null) {
-                                    pasteClipboardAndNext(newPhoneInput, localNumber)
+                                    // PAKE SET_TEXT LAGI KAYAK AWAL (LEBIH STABIL)
+                                    forceSetText(newPhoneInput, localNumber)
                                 } else {
                                     failAndSkip()
                                 }
-                            }, 1500)
+                            }, 1200)
 
-                        }, 1500)
+                        }, 1200)
                     } else {
-                        // Kalo gak nemu search, paksa paste pake kode negara full
-                        pasteClipboardAndNext(phoneInput, currentNumber)
+                        forceSetText(phoneInput, currentNumber)
                     }
                 }, 1000)
             } else {
-                pasteClipboardAndNext(phoneInput, currentNumber)
+                forceSetText(phoneInput, currentNumber)
             }
         } else {
-            pasteClipboardAndNext(phoneInput, currentNumber)
+            forceSetText(phoneInput, currentNumber)
         }
     }
 
-    // PAKE CLIPBOARD & ACTION_PASTE BIAR LEBIH PASTI MASUK
-    private fun pasteClipboardAndNext(phoneInput: AccessibilityNodeInfo, number: String) {
-        // 1. Copy ke clipboard
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("number", number)
-        clipboard.setPrimaryClip(clip)
-
-        // 2. Klik kolom input biar fokus
-        phoneInput.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    // BALIK KE SET_TEXT BIAR PASTI MASUK
+    private fun forceSetText(phoneInput: AccessibilityNodeInfo, number: String) {
         phoneInput.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-
+        phoneInput.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        
         handler.postDelayed({
-            // 3. Bersihin teks lama (kalo ada)
             val clearArgs = Bundle()
             clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
             phoneInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
 
             handler.postDelayed({
-                // 4. Paste
-                phoneInput.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                val setArgs = Bundle()
+                setArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, number)
+                phoneInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setArgs)
                 
                 handler.postDelayed({
-                    // 5. Klik Next
-                    val root = getWhatsAppRoot()
+                    // Klik Next
+                    val root = rootInActiveWindow
                     val nextBtn = root?.findAccessibilityNodeInfosByText("Next")?.firstOrNull()
                         ?: root?.findAccessibilityNodeInfosByText("Berikutnya")?.firstOrNull()
                         ?: root?.findAccessibilityNodeInfosByText("Lanjut")?.firstOrNull()
 
                     nextBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
 
+                    // Tunggu hasil 4.5 detik
                     handler.postDelayed({
-                        val finalRoot = getWhatsAppRoot()
+                        val finalRoot = rootInActiveWindow
                         if (finalRoot != null) {
                             detectStatus(finalRoot)
                         } else {
                             failAndSkip()
                         }
                     }, 4500)
-                }, 500)
+                }, 300)
             }, 300)
-        }, 500)
+        }, 300)
     }
 
     private fun failAndSkip() {
-        handler.removeCallbacks(watchdogRunnable)
+        handler.removeCallbacks(forceResetRunnable)
         isProcessing = false
-        activeNumber = null
         performGlobalAction(GLOBAL_ACTION_BACK)
         handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 1000)
     }
@@ -331,7 +314,7 @@ class SpudGachaService : AccessibilityService() {
     }
 
     private fun detectStatus(root: AccessibilityNodeInfo) {
-        handler.removeCallbacks(watchdogRunnable) // Matiin watchdog karena udah dapet status
+        handler.removeCallbacks(forceResetRunnable) // Matiin alarm karena udah dapet status
         val allText = root.findAccessibilityNodeInfosByText("").mapNotNull { it.text?.toString() }.joinToString(" ")
 
         when {
@@ -350,22 +333,22 @@ class SpudGachaService : AccessibilityService() {
                 updateOverlay()
                 isPaused = true
                 isProcessing = false
-                activeNumber = null
                 handler.post { Toast.makeText(applicationContext, "Nomor Ready! Masukin OTP.", Toast.LENGTH_LONG).show() }
             }
             else -> {
-                skipToNextNumber("Gagal deteksi status, skip...")
+                skipToNextNumber("Gagal deteksi, skip...")
             }
         }
     }
 
     private fun skipToNextNumber(msg: String) {
+        handler.removeCallbacks(forceResetRunnable)
         handler.post { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show() }
         performGlobalAction(GLOBAL_ACTION_BACK)
         handler.postDelayed({
             performGlobalAction(GLOBAL_ACTION_BACK)
-            handler.postDelayed({ isProcessing = false; activeNumber = null }, 1500)
-        }, 1500)
+            handler.postDelayed({ isProcessing = false }, 1200)
+        }, 1200)
     }
 
     private fun updateOverlay() {
