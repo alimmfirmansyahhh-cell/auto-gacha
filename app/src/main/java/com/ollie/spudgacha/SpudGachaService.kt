@@ -1,8 +1,6 @@
 package com.ollie.spudgacha
 
 import android.accessibilityservice.AccessibilityService
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -125,18 +123,18 @@ class SpudGachaService : AccessibilityService() {
             return
         }
 
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("num", cleanNum))
-
+        // AUTO PASTE TANPA CLIPBOARD
         phoneInput.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         phoneInput.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         
         handler.postDelayed({
+            // Bersihin teks lama
             val clearArgs = Bundle()
             clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
             phoneInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
 
             handler.postDelayed({
+                // Suntik nomor baru
                 val setArgs = Bundle()
                 setArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, cleanNum)
                 phoneInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setArgs)
@@ -191,7 +189,6 @@ class SpudGachaService : AccessibilityService() {
                     updateOverlay()
                     skipToNext("Nomor Cooldown! Skip...")
                 } else {
-                    // Fallback kalo tombolnya gak nemu
                     performGlobalAction(GLOBAL_ACTION_BACK)
                     cdCount++
                     updateOverlay()
@@ -206,7 +203,6 @@ class SpudGachaService : AccessibilityService() {
 
                 if (yaBtn != null) {
                     yaBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    // Tunggu 3.5 detik, terus cek status lagi (bakal masuk ke CD, Ban, atau OTP)
                     handler.postDelayed({
                         val nextRoot = getWhatsAppRoot()
                         if (nextRoot != null) detectStatus(nextRoot) else failAndSkip()
@@ -259,7 +255,6 @@ class SpudGachaService : AccessibilityService() {
         handler.removeCallbacks(watchdog)
         handler.post { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show() }
         
-        // Kasih jeda buat UI balik ke form input, baru reset state
         handler.postDelayed({
             isProcessing = false
         }, 2500)
