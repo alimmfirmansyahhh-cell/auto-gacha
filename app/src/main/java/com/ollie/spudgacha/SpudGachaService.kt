@@ -26,6 +26,7 @@ class SpudGachaService : AccessibilityService() {
     private var isProcessing = false
     private val handler = Handler(Looper.getMainLooper())
 
+    // Jaring pengaman
     private val watchdog = Runnable {
         if (isProcessing) {
             isProcessing = false
@@ -51,9 +52,10 @@ class SpudGachaService : AccessibilityService() {
                         if (edits != null && edits.isNotEmpty()) phoneInput = edits[0]
                     }
 
+                    // Kalo nemu kolom input, hajar!
                     if (phoneInput != null) {
                         isProcessing = true
-                        handler.postDelayed(watchdog, 12000) // 12 detik timeout (karena ada popup Ya)
+                        handler.postDelayed(watchdog, 12000)
                         handleNumber(phoneInput)
                     }
                 }
@@ -150,7 +152,7 @@ class SpudGachaService : AccessibilityService() {
                         handler.postDelayed({
                             val statusRoot = getWhatsAppRoot()
                             if (statusRoot != null) detectStatus(statusRoot) else failAndSkip()
-                        }, 2500) // Tunggu 2.5 detik buat liat popup
+                        }, 2500)
                     } else {
                         failAndSkip()
                     }
@@ -163,51 +165,66 @@ class SpudGachaService : AccessibilityService() {
         val allText = root.findAccessibilityNodeInfosByText("").mapNotNull { it.text?.toString() }.joinToString(" ")
 
         when {
-            // 1. Popup Konfirmasi "Apakah ini nomor yang benar?"
-            allText.contains("Apakah ini nomor yang benar", true) -> {
-                val yaBtn = root.findAccessibilityNodeInfosByText("Ya")?.firstOrNull()
-                    ?: root.findAccessibilityNodeInfosByText("Yes")?.firstOrNull()
-                    
-                if (yaBtn != null) {
-                    yaBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    // Tunggu layar OTP / Error berikutnya
-                    handler.postDelayed({
-                        val nextRoot = getWhatsAppRoot()
-                        if (nextRoot != null) detectStatus(nextRoot) else failAndSkip()
-                    }, 4000)
+            // 1. BANNED (Foto ke 3)
+            allText.contains("Akun ini tidak bisa menggunakan WhatsApp", true) || 
+            allText.contains("Daftarkan nomor telepon baru", true) -> {
+                
+                val regBtn = root.findAccessibilityNodeInfosByText("Daftarkan nomor telepon baru")?.firstOrNull()
+                if (regBtn != null) {
+                    regBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    banCount++
+                    updateOverlay()
+                    skipToNext("Nomor Banned! Skip...")
                 } else {
                     failAndSkip()
                 }
             }
-            
-            // 2. Popup Tidak Bisa Kirim SMS (Cooldown)
-            allText.contains("Tidak bisa mengirim SMS", true) || allText.contains("coba lagi dalam", true) -> {
-                val okeBtn = root.findAccessibilityNodeInfosByText("Oke")?.firstOrNull()
-                    ?: root.findAccessibilityNodeInfosByText("OK")?.firstOrNull()
-                okeBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+
+            // 2. COOLDOWN / Limit SMS (Foto ke 1)
+            allText.contains("Tidak bisa mengirim SMS", true) || 
+            allText.contains("baru-baru ini mendaftarkan", true) -> {
                 
-                cdCount++
-                updateOverlay()
-                skipToNext("Nomor Cooldown! Skip...")
+                val wrongNumBtn = root.findAccessibilityNodeInfosByText("Nomor telepon salah?")?.firstOrNull()
+                if (wrongNumBtn != null) {
+                    wrongNumBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    cdCount++
+                    updateOverlay()
+                    skipToNext("Nomor Cooldown! Skip...")
+                } else {
+                    // Fallback kalo tombolnya gak nemu
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    cdCount++
+                    updateOverlay()
+                    handler.postDelayed({ isProcessing = false }, 2000)
+                }
             }
 
-            // 3. Bukan Nomor Valid
-            allText.contains("bukan nomor yang valid", true) || allText.contains("not a valid", true) -> {
-                val okeBtn = root.findAccessibilityNodeInfosByText("Oke")?.firstOrNull()
-                    ?: root.findAccessibilityNodeInfosByText("OK")?.firstOrNull()
-                okeBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                
-                banCount++
-                updateOverlay()
-                skipToNext("Nomor Invalid! Skip...")
+            // 3. KONFIRMASI NOMOR (Foto ke 2)
+            allText.contains("Apakah ini nomor yang benar", true) -> {
+                val yaBtn = root.findAccessibilityNodeInfosByText("Ya")?.firstOrNull()
+                    ?: root.findAccessibilityNodeInfosByText("Yes")?.firstOrNull()
+
+                if (yaBtn != null) {
+                    yaBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    // Tunggu 3.5 detik, terus cek status lagi (bakal masuk ke CD, Ban, atau OTP)
+                    handler.postDelayed({
+                        val nextRoot = getWhatsAppRoot()
+                        if (nextRoot != null) detectStatus(nextRoot) else failAndSkip()
+                    }, 3500)
+                } else {
+                    failAndSkip()
+                }
             }
 
-            // 4. Layar OTP Muncul
-            allText.contains("Memverifikasi nomor Anda", true) || allText.contains("Verifikasi nomor telepon", true) || allText.contains("kode 6 digit", true) -> {
+            // 4. SIAP OTP
+            allText.contains("Memverifikasi nomor Anda", true) || 
+            allText.contains("Verifikasi nomor telepon", true) || 
+            allText.contains("kode 6 digit", true) || 
+            allText.contains("Memverifikasi nomor", true) -> {
+                
                 winCount++
                 updateOverlay()
                 
-                // PAUSE TOTAL
                 GachaQueue.isPaused = true
                 isProcessing = false
                 handler.removeCallbacks(watchdog) 
@@ -217,13 +234,23 @@ class SpudGachaService : AccessibilityService() {
                 }
             }
 
-            // 5. Loading / Gak Kedeteksi (Tunggu bentar lagi)
+            // 5. NOMOR INVALID
+            allText.contains("bukan nomor yang valid", true) || allText.contains("not a valid", true) -> {
+                val okeBtn = root.findAccessibilityNodeInfosByText("Oke")?.firstOrNull()
+                    ?: root.findAccessibilityNodeInfosByText("OK")?.firstOrNull()
+                okeBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                banCount++
+                updateOverlay()
+                skipToNext("Nomor Invalid! Skip...")
+            }
+
+            // 6. LOADING / TIDAK KEDETEKSI
             else -> {
                 handler.postDelayed({
                     if (GachaQueue.isPaused) return@postDelayed
                     val nextRoot = getWhatsAppRoot()
                     if (nextRoot != null) detectStatus(nextRoot) else failAndSkip()
-                }, 3000)
+                }, 2500)
             }
         }
     }
@@ -231,15 +258,18 @@ class SpudGachaService : AccessibilityService() {
     private fun skipToNext(msg: String) {
         handler.removeCallbacks(watchdog)
         handler.post { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show() }
-        performGlobalAction(GLOBAL_ACTION_BACK)
+        
+        // Kasih jeda buat UI balik ke form input, baru reset state
         handler.postDelayed({
-            performGlobalAction(GLOBAL_ACTION_BACK)
-            handler.postDelayed({ isProcessing = false }, 1500)
-        }, 1500)
+            isProcessing = false
+        }, 2500)
     }
 
     private fun failAndSkip() {
-        skipToNext("Error / Gagal deteksi. Skip...")
+        handler.removeCallbacks(watchdog)
+        isProcessing = false
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 1000)
     }
 
     private fun updateOverlay() {
