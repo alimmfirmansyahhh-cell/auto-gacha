@@ -37,8 +37,7 @@ class SpudGachaService : AccessibilityService() {
 
     private val pollRunnable = object : Runnable {
         override fun run() {
-            // Cek kalo digas atau distop
-            if (GachaQueue.isStopped || GachaQueue.numbers.isEmpty()) {
+            if (GachaQueue.isStopped || GachaQueue.numbers.isEmpty() || GachaQueue.isPaused) {
                 handler.postDelayed(this, 2000)
                 return
             }
@@ -54,7 +53,7 @@ class SpudGachaService : AccessibilityService() {
 
                     if (phoneInput != null) {
                         isProcessing = true
-                        handler.postDelayed(watchdog, 10000) // 10 detik timeout
+                        handler.postDelayed(watchdog, 12000) // 12 detik timeout (karena ada popup Ya)
                         handleNumber(phoneInput)
                     }
                 }
@@ -108,14 +107,13 @@ class SpudGachaService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {}
 
     private fun handleNumber(phoneInput: AccessibilityNodeInfo) {
-        if (GachaQueue.numbers.isEmpty() || GachaQueue.isStopped) {
+        if (GachaQueue.numbers.isEmpty() || GachaQueue.isStopped || GachaQueue.isPaused) {
             isProcessing = false
             handler.removeCallbacks(watchdog)
             return
         }
 
         val rawNum = GachaQueue.numbers.removeAt(0)
-        // Biarin plusnya, cuma hapus spasi sama strip
         val cleanNum = rawNum.replace(" ", "").replace("-", "")
         updateOverlay()
 
@@ -149,43 +147,83 @@ class SpudGachaService : AccessibilityService() {
 
                     if (nextBtn != null) {
                         nextBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        // Tunggu hasil
                         handler.postDelayed({
                             val statusRoot = getWhatsAppRoot()
                             if (statusRoot != null) detectStatus(statusRoot) else failAndSkip()
-                        }, 5000)
+                        }, 2500) // Tunggu 2.5 detik buat liat popup
                     } else {
                         failAndSkip()
                     }
-                }, 1000)
+                }, 800)
             }, 500)
         }, 500)
     }
 
     private fun detectStatus(root: AccessibilityNodeInfo) {
-        handler.removeCallbacks(watchdog)
         val allText = root.findAccessibilityNodeInfosByText("").mapNotNull { it.text?.toString() }.joinToString(" ")
 
         when {
+            // 1. Popup Konfirmasi "Apakah ini nomor yang benar?"
+            allText.contains("Apakah ini nomor yang benar", true) -> {
+                val yaBtn = root.findAccessibilityNodeInfosByText("Ya")?.firstOrNull()
+                    ?: root.findAccessibilityNodeInfosByText("Yes")?.firstOrNull()
+                    
+                if (yaBtn != null) {
+                    yaBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    // Tunggu layar OTP / Error berikutnya
+                    handler.postDelayed({
+                        val nextRoot = getWhatsAppRoot()
+                        if (nextRoot != null) detectStatus(nextRoot) else failAndSkip()
+                    }, 4000)
+                } else {
+                    failAndSkip()
+                }
+            }
+            
+            // 2. Popup Tidak Bisa Kirim SMS (Cooldown)
+            allText.contains("Tidak bisa mengirim SMS", true) || allText.contains("coba lagi dalam", true) -> {
+                val okeBtn = root.findAccessibilityNodeInfosByText("Oke")?.firstOrNull()
+                    ?: root.findAccessibilityNodeInfosByText("OK")?.firstOrNull()
+                okeBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                
+                cdCount++
+                updateOverlay()
+                skipToNext("Nomor Cooldown! Skip...")
+            }
+
+            // 3. Bukan Nomor Valid
             allText.contains("bukan nomor yang valid", true) || allText.contains("not a valid", true) -> {
                 val okeBtn = root.findAccessibilityNodeInfosByText("Oke")?.firstOrNull()
                     ?: root.findAccessibilityNodeInfosByText("OK")?.firstOrNull()
                 okeBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                skipToNext("Nomor Sampah/Invalid! Skip...")
+                
+                banCount++
+                updateOverlay()
+                skipToNext("Nomor Invalid! Skip...")
             }
-            allText.contains("diblokir", true) || allText.contains("banned", true) || allText.contains("blocked", true) -> {
-                banCount++; updateOverlay(); skipToNext("Banned! Skip...")
-            }
-            allText.contains("terlalu banyak", true) || allText.contains("too many", true) || allText.contains("coba lagi", true) || allText.contains("cooldown", true) -> {
-                cdCount++; updateOverlay(); skipToNext("Cooldown! Skip...")
-            }
-            allText.contains("verifikasi", true) || allText.contains("verify", true) || allText.contains("kode", true) || allText.contains("code", true) -> {
-                winCount++; updateOverlay()
+
+            // 4. Layar OTP Muncul
+            allText.contains("Memverifikasi nomor Anda", true) || allText.contains("Verifikasi nomor telepon", true) || allText.contains("kode 6 digit", true) -> {
+                winCount++
+                updateOverlay()
+                
+                // PAUSE TOTAL
+                GachaQueue.isPaused = true
                 isProcessing = false
-                handler.post { Toast.makeText(applicationContext, "Nomor Ready! Masukin OTP.", Toast.LENGTH_LONG).show() }
+                handler.removeCallbacks(watchdog) 
+                
+                handler.post { 
+                    Toast.makeText(applicationContext, "Nomor Ready! Masukin OTP manual, lalu balik ke app & pencet LANJUT GACHA.", Toast.LENGTH_LONG).show() 
+                }
             }
+
+            // 5. Loading / Gak Kedeteksi (Tunggu bentar lagi)
             else -> {
-                skipToNext("Gagal deteksi, skip...")
+                handler.postDelayed({
+                    if (GachaQueue.isPaused) return@postDelayed
+                    val nextRoot = getWhatsAppRoot()
+                    if (nextRoot != null) detectStatus(nextRoot) else failAndSkip()
+                }, 3000)
             }
         }
     }
@@ -201,7 +239,7 @@ class SpudGachaService : AccessibilityService() {
     }
 
     private fun failAndSkip() {
-        skipToNext("Error UI. Skip...")
+        skipToNext("Error / Gagal deteksi. Skip...")
     }
 
     private fun updateOverlay() {
